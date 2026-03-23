@@ -233,7 +233,7 @@ if "ydl_options" not in state:
     state["ydl_options"] = {
         "format": "ba/b",
         "outtmpl": {"default": os.path.join(state["temp_dir"].name, "audio.%(ext)s")},
-        "js_runtimes": ["nodejs"],
+        "js_runtimes": {"deno": {"path": None}, "node": {"path": None}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
