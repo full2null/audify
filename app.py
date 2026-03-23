@@ -242,7 +242,8 @@ if "ydl_options" not in state:
                 "nopostoverwrites": False,
             },
         ],
-        "quiet": True,
+        "quiet": False,
+        "verbose": True,
         "writethumbnail": True,
     }
 
