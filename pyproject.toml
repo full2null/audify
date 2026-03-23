@@ -1,0 +1,11 @@
+[project]
+name = "audify"
+version = "1.0.0"
+description = "Web app for extracting and tagging audio from URLs"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+  "pillow>=12.1.1",
+  "streamlit>=1.55.0",
+  "yt-dlp[curl-cffi,default]>=2026.3.17",
+]
