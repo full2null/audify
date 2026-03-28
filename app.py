@@ -28,7 +28,8 @@ QUALITY_PRESETS = {
 }
 CODEC_LABELS = {"mp3": "MP3", "aac": "AAC"}
 CODEC_INFO = {"mp3": ("mp3", "mpeg"), "aac": ("m4a", "aac")}
-_FILENAME_TABLE = str.maketrans(
+DISPLAY_ARTIST_SEPARATOR = " & "
+FILENAME_TRANSLATION_TABLE = str.maketrans(
     {
         "\\": "＼",
         "/": "／",
@@ -56,42 +57,54 @@ META_KEYS = (
 )
 
 
+def split_artists(value: str) -> list[str]:
+    return [a.strip() for a in value.split(";") if a.strip()]
+
+
+def resolve_album_artist(fields: dict) -> str:
+    album_artist = (fields.get("album_artist") or "").strip()
+    return album_artist
+
+
 def apply_metadata_mp3(filepath: str, fields: dict):
     audio = MP3(filepath)
     if audio.tags is None:
         audio.add_tags()
     tags = audio.tags
 
-    def _set(tag_cls, value):
+    def set_text_frame(tag_cls, value):
         name = tag_cls.__name__
         tags.delall(name)
         if value:
             tags.add(tag_cls(encoding=3, text=value))
 
-    _set(TIT2, fields["title"])
+    set_text_frame(TIT2, fields["title"])
 
-    artists = [a.strip() for a in fields["artist"].split(";") if a.strip()]
+    artists = split_artists(fields["artist"])
+    display_artist = DISPLAY_ARTIST_SEPARATOR.join(artists)
+    album_artist = resolve_album_artist(fields)
+
     tags.delall("TPE1")
-    if artists:
-        tags.add(TPE1(encoding=3, text=artists))
+    if display_artist:
+        tags.add(TPE1(encoding=3, text=display_artist))
     tags.delall("TXXX:ARTISTS")
     if artists:
         tags.add(TXXX(encoding=3, desc="ARTISTS", text=artists))
 
-    _set(TALB, fields["album"])
-    _set(TPE2, fields["album_artist"])
-    _set(TDRC, fields["year"])
-    _set(TCON, fields["genre"])
+    set_text_frame(TALB, fields["album"])
+    set_text_frame(TPE2, album_artist)
+    set_text_frame(TDRC, fields["year"])
+    set_text_frame(TCON, fields["genre"])
 
     track = fields["track_number"]
     if fields["total_tracks"] and track:
         track = f"{track}/{fields['total_tracks']}"
-    _set(TRCK, track)
+    set_text_frame(TRCK, track)
 
     disc = fields["disc_number"]
     if fields["total_discs"] and disc:
         disc = f"{disc}/{fields['total_discs']}"
-    _set(TPOS, disc)
+    set_text_frame(TPOS, disc)
 
     if fields["cover"]:
         tags.delall("APIC")
@@ -104,29 +117,33 @@ def apply_metadata_mp3(filepath: str, fields: dict):
 def apply_metadata_m4a(filepath: str, fields: dict):
     audio = MP4(filepath)
 
-    def _set(key: str, value: str):
+    def set_text_tag(key: str, value: str):
         if value:
             audio[key] = [value]
         elif key in audio:
             del audio[key]
 
-    _set("©nam", fields["title"])
+    set_text_tag("©nam", fields["title"])
 
-    artists = [a.strip() for a in fields["artist"].split(";") if a.strip()]
-    if artists:
-        audio["©ART"] = ["; ".join(artists)]
+    artists = split_artists(fields["artist"])
+    display_artist = DISPLAY_ARTIST_SEPARATOR.join(artists)
+    album_artist = resolve_album_artist(fields)
+
+    if display_artist:
+        audio["©ART"] = [display_artist]
     elif "©ART" in audio:
         del audio["©ART"]
+
     freeform_key = "----:com.apple.iTunes:ARTISTS"
     if artists:
         audio[freeform_key] = [MP4FreeForm(a.encode("utf-8")) for a in artists]
     elif freeform_key in audio:
         del audio[freeform_key]
 
-    _set("©alb", fields["album"])
-    _set("aART", fields["album_artist"])
-    _set("©day", fields["year"])
-    _set("©gen", fields["genre"])
+    set_text_tag("©alb", fields["album"])
+    set_text_tag("aART", album_artist)
+    set_text_tag("©day", fields["year"])
+    set_text_tag("©gen", fields["genre"])
 
     if fields["track_number"]:
         try:
@@ -156,11 +173,11 @@ def apply_metadata_m4a(filepath: str, fields: dict):
     audio.save()
 
 
-_APPLY_METADATA = {"mp3": apply_metadata_mp3, "aac": apply_metadata_m4a}
+APPLY_METADATA_BY_CODEC = {"mp3": apply_metadata_mp3, "aac": apply_metadata_m4a}
 
 
 def apply_metadata(filepath: str, fields: dict, codec: str):
-    _APPLY_METADATA[codec](filepath, fields)
+    APPLY_METADATA_BY_CODEC[codec](filepath, fields)
 
 
 def crop_to_square(image_data: bytes):
@@ -176,7 +193,7 @@ def crop_to_square(image_data: bytes):
     return "image/jpeg", buf.getvalue()
 
 
-def _parse_release_date(info: dict) -> datetime.date | None:
+def parse_release_date(info: dict) -> datetime.date | None:
     date_str = (info.get("release_date") or "") or (info.get("upload_date") or "")
     if len(date_str) == 8:
         try:
@@ -194,18 +211,6 @@ def _parse_release_date(info: dict) -> datetime.date | None:
     return None
 
 
-def on_download():
-    try:
-        os.remove(os.path.join(state["temp_dir"].name, state["current_filename"]))
-    except FileNotFoundError:
-        pass
-
-
-def on_url_change():
-    state["extracted_info"] = None
-    state["meta_initialized"] = False
-
-
 st.set_page_config(
     page_title="Audify",
     menu_items={
@@ -215,16 +220,16 @@ st.set_page_config(
 
 state = st.session_state
 
-_STATE_DEFAULTS = {
+STATE_DEFAULTS = {
     "codec": None,
     "extracted_info": None,
     "quality": None,
     "meta_initialized": False,
     "current_filename": None,
 }
-for _k, _v in _STATE_DEFAULTS.items():
-    if _k not in state:
-        state[_k] = _v
+for k, v in STATE_DEFAULTS.items():
+    if k not in state:
+        state[k] = v
 
 if "temp_dir" not in state:
     state["temp_dir"] = tempfile.TemporaryDirectory()
@@ -246,6 +251,19 @@ if "ydl_options" not in state:
         "verbose": True,
         "writethumbnail": True,
     }
+
+
+def on_download():
+    try:
+        os.remove(os.path.join(state["temp_dir"].name, state["current_filename"]))
+    except FileNotFoundError:
+        pass
+
+
+def on_url_change():
+    state["extracted_info"] = None
+    state["meta_initialized"] = False
+
 
 st.title("Audify", anchor=False)
 st.markdown(
@@ -278,7 +296,6 @@ if url:
         info = state["extracted_info"]
         thumbnail_url: str = info["thumbnail"]
         title: str = info["title"]
-        uploader: str = info["uploader"]
 
         if not state["meta_initialized"]:
             artists_list = info.get("artists") or []
@@ -290,8 +307,7 @@ if url:
                     or info.get("creator")
                     or info.get("uploader", "")
                 )
-            tags = info.get("tags") or []
-            state["meta_year"] = _parse_release_date(info)
+            state["meta_year"] = parse_release_date(info)
 
             state["meta_title"] = info.get("track") or title
             state["meta_artist"] = artist
@@ -317,7 +333,7 @@ if url:
         st.text_input(
             "Artist",
             key="meta_artist",
-            help="Use ; to separate multiple artists",
+            help="Use a semicolon (;) to separate multiple artists",
         )
 
         col_left, col_right = st.columns(2)
@@ -375,7 +391,7 @@ if url:
 
                 filename = f"{state['meta_title']}.{extension}"
 
-                filename = filename.translate(_FILENAME_TABLE)
+                filename = filename.translate(FILENAME_TRANSLATION_TABLE)
 
                 state["current_filename"] = filename
                 src = os.path.join(state["temp_dir"].name, f"audio.{extension}")
